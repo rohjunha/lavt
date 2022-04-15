@@ -151,14 +151,13 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, epoc
 
 class LAVTPL(pl.LightningModule):
     def __init__(self, args, num_train_steps):
+        pl.LightningModule.__init__(self)
         self.args = args
         print(args.model)
         self.num_train_steps = num_train_steps
 
         self.model = segmentation.__dict__[args.model](pretrained=args.pretrained_swin_weights, args=args)
-        self.model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
         self.bert_model = BertModel.from_pretrained(args.ck_bert)
-        self.bert_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(self.bert_model)
 
         # if args.resume:
         #     checkpoint = torch.load(args.resume, map_location='cpu')
@@ -253,8 +252,15 @@ def main(args):
 
     model = LAVTPL(args=args, num_train_steps=len(train_loader))
 
-    trainer = pl.Trainer(max_steps=args.epoch)
-    trainer.fit(model=model, train_dataloader=train_loader, val_dataloaders=val_loader)
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        gpus=4,
+        strategy='ddp',
+        sync_batchnorm=True)
+    trainer.fit(
+        model=model,
+        train_dataloaders=train_loader,
+        val_dataloaders=val_loader)
 
 
 if __name__ == "__main__":
