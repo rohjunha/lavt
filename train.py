@@ -254,7 +254,7 @@ def main(args):
 
     trainer = pl.Trainer(
         max_epochs=args.epochs,
-        gpus=4,
+        gpus=args.gpus,
         strategy='ddp',
         sync_batchnorm=True)
     trainer.fit(
