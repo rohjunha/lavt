@@ -10,5 +10,6 @@ scipy
 scikit-image
 pycocotools==2.0.2
 opencv-python==4.5.3.56
-tokenizers==0.8.1rc1
+tokenizers
 h5py
+pytorch-lightning

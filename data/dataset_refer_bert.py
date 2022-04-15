@@ -1,20 +1,13 @@
 import os
-import sys
-import torch.utils.data as data
-import torch
-from torchvision import transforms
-from torch.autograd import Variable
+
 import numpy as np
+import torch
+import torch.utils.data as data
 from PIL import Image
-import torchvision.transforms.functional as TF
-import random
-
-from bert.tokenization_bert import BertTokenizer
-
-import h5py
-from refer.refer import REFER
 
 from args import get_parser
+from bert.tokenization_bert import BertTokenizer
+from refer.refer import REFER
 
 # Dataset configuration initialization
 parser = get_parser()
@@ -22,7 +15,6 @@ args = parser.parse_args()
 
 
 class ReferDataset(data.Dataset):
-
     def __init__(self,
                  args,
                  image_transforms=None,
