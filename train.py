@@ -282,12 +282,12 @@ class LAVTPL(pl.LightningModule):
         pred = output.argmax(1)
         intersection = torch.sum(torch.mul(pred, target))
         union = torch.sum(torch.add(pred, target)) - intersection
-        self.log('val/loss', criterion(output, target))
+        self.log('val/loss', criterion(output, target), on_step=False, on_epoch=True)
         return {'i': intersection, 'u': union}
 
     def validation_step_end(self, batch_parts):
-        intersection = sum(batch_parts['i'])
-        union = sum(batch_parts['u'])
+        intersection = batch_parts['i']
+        union = batch_parts['u']
         if intersection == 0 or union == 0:
             iou = 0.
         else:
@@ -311,10 +311,11 @@ class LAVTPL(pl.LightningModule):
             for i, eval_iou in enumerate(EVAL_IOUS):
                 seg_correct[i] += (output['iou'] >= eval_iou)
 
-            self.log('mean iou', np.mean(np.array(mean_IoU)) * 100.)
-            for i, eval_iou in range(len(EVAL_IOUS)):
-                self.log('precision@{:.2f}'.format(eval_iou), seg_correct[i] * 100. / num_iter)
-            self.log('overall iou', cum_I * 100. / cum_U)
+            self.log('mean iou', np.mean(np.array(mean_IoU)) * 100., on_step=False, on_epoch=True)
+            for i, eval_iou in enumerate(EVAL_IOUS):
+                self.log('precision@{:.2f}'.format(eval_iou), seg_correct[i] * 100. / num_iter,
+                         on_step=False, on_epoch=True)
+            self.log('overall iou', cum_I * 100. / cum_U, on_step=False, on_epoch=True)
 
 
 def main(args):

@@ -26,7 +26,7 @@ def get_parser():
     parser.add_argument('--splitBy', default='unc', help='change to umd or google when the dataset is G-Ref (RefCOCOg)')
     parser.add_argument('--swin_type', default='base',
                         help='tiny, small, base, or large variants of the Swin Transformer')
-    parser.add_argument('--pretrained_swin_weights', default='',
+    parser.add_argument('--pretrained_swin_weights', default='./pretrained_weights/swin_base_patch4_window12_384_22k.pth',
                         help='path to pre-trained Swin backbone weights')
     parser.add_argument('--ddp_trained_weights', action='store_true',
                         help='Only needs specified when testing,'
