@@ -14,6 +14,11 @@ import utils
 from bert.modeling_bert import BertModel
 from lib import segmentation
 
+from pytorch_lightning.loggers import WandbLogger
+
+
+EVAL_IOUS = [.5, .6, .7, .8, .9]
+
 
 def get_transform(args):
     transforms = [T.Resize(args.img_size, args.img_size),
@@ -149,6 +154,51 @@ def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, epoc
         torch.cuda.empty_cache()
 
 
+# from pytorch_lightning.loggers.base import LightningLoggerBase, rank_zero_experiment
+# from pytorch_lightning.utilities.distributed import rank_zero_only
+#
+#
+# class EvaluationLogger(LightningLoggerBase):
+#     def __init__(self):
+#         LightningLoggerBase.__init__(self)
+#         self.total_its = 0
+#         self.acc_ious = 0
+#         self.cum_I, self.cum_U = 0, 0
+#         self.eval_seg_iou_list = [.5, .6, .7, .8, .9]
+#         self.seg_correct = [0 for _ in range(len(self.eval_seg_iou_list))]
+#         self.seg_total = 0
+#         self.mean_IoU = []
+#
+#     @property
+#     def name(self):
+#         return 'EvaluationLogger'
+#
+#     @property
+#     def version(self):
+#         # Return the experiment version, int or str.
+#         return "0.1"
+#
+#     @rank_zero_only
+#     def log_metrics(self, metrics, step):
+#         # metrics is a dictionary of metric names and values
+#         # your code to record metrics goes here
+#         self.total_its += 1
+#         self.acc_ious += metrics['iou']
+#         self.mean_IoU.append(metrics['iou'])
+#         self.cum_I += metrics['i']
+#         self.cum_U += metrics['u']
+#
+#         for i, eval_seg_iou in enumerate(self.eval_seg_iou_list):
+#             self.seg_correct[i] += (metrics['iou'] >= eval_seg_iou)
+#         self.seg_total += 1
+#
+#         res = {'mean IoU': np.mean(np.array(self.mean_IoU)) * 100.}
+#         for i, eval_seg_iou in range(len(self.eval_seg_iou_list)):
+#             res['precision@{:.2f}'.format(eval_seg_iou)] = self.seg_correct[i] * 100. / self.seg_total
+#         res['overall IoU'] = self.cum_I * 100. / self.cum_U
+#         super(EvaluationLogger, self).log_metrics(res, step)
+
+
 class LAVTPL(pl.LightningModule):
     def __init__(self, args, num_train_steps):
         pl.LightningModule.__init__(self)
@@ -214,7 +264,9 @@ class LAVTPL(pl.LightningModule):
         attentions = attentions.unsqueeze(dim=-1)  # (batch, N_l, 1)
         output = self.model(image, embedding, l_mask=attentions)
 
-        return criterion(output, target)
+        loss = criterion(output, target)
+        self.log('train/loss', loss)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         image, target, sentences, attentions = batch
@@ -226,11 +278,43 @@ class LAVTPL(pl.LightningModule):
         embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
         attentions = attentions.unsqueeze(dim=-1)  # (B, N_l, 1)
         output = self.model(image, embedding, l_mask=attentions)
-        iou, I, U = IoU(output, target)
-        self.log('i', I)
-        self.log('u', U)
-        self.log('iou', iou)
-        return criterion(output, target)
+
+        pred = output.argmax(1)
+        intersection = torch.sum(torch.mul(pred, target))
+        union = torch.sum(torch.add(pred, target)) - intersection
+        self.log('val/loss', criterion(output, target))
+        return {'i': intersection, 'u': union}
+
+    def validation_step_end(self, batch_parts):
+        intersection = sum(batch_parts['i'])
+        union = sum(batch_parts['u'])
+        if intersection == 0 or union == 0:
+            iou = 0.
+        else:
+            iou = float(intersection) / float(union)
+        return {'i': intersection, 'u': union, 'iou': iou}
+
+    def validation_epoch_end(self, validation_step_outputs):
+        num_iter = 0
+        cum_I, cum_U = 0, 0
+        acc_ious = 0.
+        mean_IoU = []
+        seg_correct = [0 for _ in range(len(EVAL_IOUS))]
+
+        for output in validation_step_outputs:
+            num_iter += 1
+            cum_I += output['i']
+            cum_U += output['u']
+            acc_ious += output['iou']
+            mean_IoU.append(output['iou'])
+
+            for i, eval_iou in enumerate(EVAL_IOUS):
+                seg_correct[i] += (output['iou'] >= eval_iou)
+
+            self.log('mean iou', np.mean(np.array(mean_IoU)) * 100.)
+            for i, eval_iou in range(len(EVAL_IOUS)):
+                self.log('precision@{:.2f}'.format(eval_iou), seg_correct[i] * 100. / num_iter)
+            self.log('overall iou', cum_I * 100. / cum_U)
 
 
 def main(args):
@@ -250,9 +334,11 @@ def main(args):
         shuffle=False,
         num_workers=args.workers)
 
+    wandb_logger = WandbLogger(project='lavt')
     model = LAVTPL(args=args, num_train_steps=len(train_loader))
 
     trainer = pl.Trainer(
+        logger=wandb_logger,
         max_epochs=args.epochs,
         gpus=args.gpus,
         strategy='ddp',
