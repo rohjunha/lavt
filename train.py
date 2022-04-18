@@ -5,7 +5,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from args import get_parser
-from lavt import LAVTPL
+from lavt import LAVT
 from utils import get_dataset
 
 
@@ -27,7 +27,7 @@ def main(args):
         num_workers=args.workers)
 
     wandb_logger = WandbLogger(project='lavt')
-    model = LAVTPL(args=args, num_train_steps=len(train_loader))
+    model = LAVT(args=args, num_train_steps=len(train_loader))
 
     filename_fmt = '{}-{}-'.format(args.model_id, args.dataset) + '{epoch:02d}'
     checkpoint_callback = ModelCheckpoint(

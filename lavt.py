@@ -1,32 +1,34 @@
 import operator
+from argparse import Namespace
 from functools import reduce
+from typing import Tuple
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from torch import nn
+from torch import Tensor
+from torch.nn.functional import cross_entropy
 
 from bert.modeling_bert import BertModel
 from lib import segmentation
-from train import args
 
-EVAL_IOUS = [.5, .6, .7, .8, .9]
+EVAL_IOU_LIST = [.5, .6, .7, .8, .9]
 
 
-def criterion(input, target):
+def criterion(prediction: Tensor, target: Tensor) -> Tensor:
     weight = torch.FloatTensor([0.9, 1.1]).cuda()
-    return nn.functional.cross_entropy(input, target, weight=weight)
+    return cross_entropy(prediction, target, weight=weight)
 
 
-def items_from_batch(batch):
+def items_from_batch(batch) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     image, target, sentences, attentions = batch
     sentences = sentences.squeeze(1)
     attentions = attentions.squeeze(1)
     return image, target, sentences, attentions
 
 
-class LAVTPL(pl.LightningModule):
-    def __init__(self, args, num_train_steps):
+class LAVT(pl.LightningModule):
+    def __init__(self, args: Namespace, num_train_steps: int):
         pl.LightningModule.__init__(self)
         self.args = args
         print(args.model)
@@ -36,17 +38,6 @@ class LAVTPL(pl.LightningModule):
         self.bert_model = BertModel.from_pretrained(args.ck_bert)
         self.params_to_optimize = []
         self.register_parameter_to_optimize()
-
-        # if args.resume:
-        #     checkpoint = torch.load(args.resume, map_location='cpu')
-        #     self.model.load_state_dict(checkpoint['model'])
-        #     self.bert_model.load_state_dict(checkpoint['bert_model'])
-        # if args.resume:
-        #     optimizer.load_state_dict(checkpoint['optimizer'])
-        #     lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        #     resume_epoch = checkpoint['epoch']
-        # else:
-        #     resume_epoch = -999
 
     def register_parameter_to_optimize(self):
         backbone_no_decay = list()
@@ -75,28 +66,27 @@ class LAVTPL(pl.LightningModule):
 
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer,
-            lambda x: (1 - x / (self.num_train_steps * args.epochs)) ** 0.9)
+            lambda x: (1 - x / (self.num_train_steps * self.args.epochs)) ** 0.9)
         return [optimizer], [lr_scheduler]
 
-    def training_step(self, batch, batch_idx):
+    def forward(self, batch, batch_idx):
         image, target, sentences, attentions = items_from_batch(batch)
 
         last_hidden_states = self.bert_model(sentences, attention_mask=attentions)[0]  # (6, 10, 768)
         embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
         attentions = attentions.unsqueeze(dim=-1)  # (batch, N_l, 1)
         output = self.model(image, embedding, l_mask=attentions)
+        return output, target
+
+    def training_step(self, batch, batch_idx):
+        output, target = self.forward(batch, batch_idx)
 
         loss = criterion(output, target)
         self.log('train/loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        image, target, sentences, attentions = items_from_batch(batch)
-
-        last_hidden_states = self.bert_model(sentences, attention_mask=attentions)[0]
-        embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-        attentions = attentions.unsqueeze(dim=-1)  # (B, N_l, 1)
-        output = self.model(image, embedding, l_mask=attentions)
+        output, target = self.forward(batch, batch_idx)
 
         prediction = output.argmax(1)
         intersection = torch.sum(torch.mul(prediction, target))
@@ -140,23 +130,23 @@ class LAVTPL(pl.LightningModule):
 
     def accumulate_outputs(self, outputs):
         num_iter = 0
-        cum_I, cum_U = 0, 0
-        acc_ious = 0.
-        mean_IoU = []
-        seg_correct = [0 for _ in range(len(EVAL_IOUS))]
+        ci, cu = 0, 0
+        acc_iou = 0.
+        mean_iou = []
+        seg_correct = [0 for _ in range(len(EVAL_IOU_LIST))]
 
         for output in outputs:
             num_iter += 1
-            cum_I += output['i']
-            cum_U += output['u']
-            acc_ious += output['iou']
-            mean_IoU.append(output['iou'])
+            ci += output['i']
+            cu += output['u']
+            acc_iou += output['iou']
+            mean_iou.append(output['iou'])
 
-            for i, eval_iou in enumerate(EVAL_IOUS):
+            for i, eval_iou in enumerate(EVAL_IOU_LIST):
                 seg_correct[i] += (output['iou'] >= eval_iou)
 
-            self.log('mean iou', np.mean(np.array(mean_IoU)) * 100., on_step=False, on_epoch=True)
-            for i, eval_iou in enumerate(EVAL_IOUS):
+            self.log('mean iou', np.mean(np.array(mean_iou)) * 100., on_step=False, on_epoch=True)
+            for i, eval_iou in enumerate(EVAL_IOU_LIST):
                 self.log('precision@{:.2f}'.format(eval_iou), seg_correct[i] * 100. / num_iter,
                          on_step=False, on_epoch=True)
-            self.log('overall iou', cum_I * 100. / cum_U, on_step=False, on_epoch=True)
+            self.log('overall iou', ci * 100. / cu, on_step=False, on_epoch=True)

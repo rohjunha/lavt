@@ -1,15 +1,11 @@
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.utils.data
-from pytorch_lightning.loggers import WandbLogger
-
-import pytorch_lightning as pl
 
 import utils
 from args import get_parser
-from bert.modeling_bert import BertModel
-from lavt import LAVTPL
-from lib import segmentation
+from lavt import LAVT
 from utils import get_dataset
 
 
@@ -85,7 +81,7 @@ def main(args):
 
     assert args.resume
     print('Load the model from {}'.format(args.resume))
-    model = LAVTPL.load_from_checkpoint(args.resume)
+    model = LAVT.load_from_checkpoint(args.resume)
 
     trainer = pl.Trainer(
         gpus=args.gpus,
