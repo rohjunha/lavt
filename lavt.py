@@ -31,7 +31,6 @@ class LAVT(pl.LightningModule):
     def __init__(self, args: Namespace, num_train_steps: int):
         pl.LightningModule.__init__(self)
         self.args = args
-        print(args.model)
         self.num_train_steps = num_train_steps
 
         self.model = segmentation.__dict__[args.model](pretrained=args.pretrained_swin_weights, args=args)

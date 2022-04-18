@@ -3,6 +3,7 @@ import argparse
 
 def get_parser():
     parser = argparse.ArgumentParser(description='LAVT training and testing')
+    parser.add_argument('--mode', default='train', help='mode to run the model (train, test)', type=str)
     parser.add_argument('--model_id', default='lavt', help='name to identify the model')
     parser.add_argument('--dataset', default='refcoco', help='refcoco, refcoco+, or refcocog')
     parser.add_argument('--model', default='lavt', help='model')
