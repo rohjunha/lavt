@@ -1,33 +1,16 @@
-import datetime
-import os
-import time
-
+import numpy as np
 import torch
 import torch.utils.data
-from torch import nn
+from pytorch_lightning.loggers import WandbLogger
 
-from bert.modeling_bert import BertModel
-import torchvision
+import pytorch_lightning as pl
 
-from lib import segmentation
-import transforms as T
 import utils
-
-import numpy as np
-from PIL import Image
-import torch.nn.functional as F
-
-
-def get_dataset(image_set, transform, args):
-    from data.dataset_refer_bert import ReferDataset
-    ds = ReferDataset(args,
-                      split=image_set,
-                      image_transforms=transform,
-                      target_transforms=None,
-                      eval_mode=True
-                      )
-    num_classes = 2
-    return ds, num_classes
+from args import get_parser
+from bert.modeling_bert import BertModel
+from lavt import LAVTPL
+from lib import segmentation
+from utils import get_dataset
 
 
 def evaluate(model, data_loader, bert_model, device):
@@ -83,15 +66,6 @@ def evaluate(model, data_loader, bert_model, device):
     print(results_str)
 
 
-def get_transform(args):
-    transforms = [T.Resize(args.img_size, args.img_size),
-                  T.ToTensor(),
-                  T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                  ]
-
-    return T.Compose(transforms)
-
-
 def computeIoU(pred_seg, gd_seg):
     I = np.sum(np.logical_and(pred_seg, gd_seg))
     U = np.sum(np.logical_or(pred_seg, gd_seg))
@@ -100,32 +74,27 @@ def computeIoU(pred_seg, gd_seg):
 
 
 def main(args):
-    device = torch.device(args.device)
-    dataset_test, _ = get_dataset(args.split, get_transform(args=args), args)
-    test_sampler = torch.utils.data.SequentialSampler(dataset_test)
-    data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=1,
-                                                   sampler=test_sampler, num_workers=args.workers)
-    print(args.model)
-    single_model = segmentation.__dict__[args.model](pretrained='',
-                                                     args=args)
-    single_model.to(device)
-    model_class = BertModel
-    single_bert_model = model_class.from_pretrained(args.ck_bert)
-    # work-around for a transformers bug; need to update to a newer version of transformers to remove these two lines
-    if args.ddp_trained_weights:
-        single_bert_model.pooler = None
-    checkpoint = torch.load(args.resume, map_location='cpu')
-    single_bert_model.load_state_dict(checkpoint['bert_model'])
-    single_model.load_state_dict(checkpoint['model'])
-    model = single_model.to(device)
-    bert_model = single_bert_model.to(device)
+    test_dataset,  = get_dataset(split=args.split, args=args, eval_mode=True)
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.workers,
+        pin_memory=args.pin_mem,
+        drop_last=False)
 
-    evaluate(model, data_loader_test, bert_model, device=device)
+    assert args.resume
+    print('Load the model from {}'.format(args.resume))
+    model = LAVTPL.load_from_checkpoint(args.resume)
+
+    trainer = pl.Trainer(
+        gpus=args.gpus,
+        strategy='ddp',
+        num_sanity_val_steps=0)
+    trainer.test(model=model, test_dataloaders=test_loader)
 
 
 if __name__ == "__main__":
-    from args import get_parser
     parser = get_parser()
     args = parser.parse_args()
-    print('Image size: {}'.format(str(args.img_size)))
     main(args)

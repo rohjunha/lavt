@@ -1,326 +1,17 @@
-import gc
-import operator
-from functools import reduce
-
-import numpy as np
 import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F
 import torch.utils.data
-from torch import nn
-
-import transforms as T
-import utils
-from bert.modeling_bert import BertModel
-from lib import segmentation
-
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-
-EVAL_IOUS = [.5, .6, .7, .8, .9]
-
-
-def get_transform(args):
-    transforms = [T.Resize(args.img_size, args.img_size),
-                  T.ToTensor(),
-                  T.Normalize(mean=[0.485, 0.456, 0.406],
-                              std=[0.229, 0.224, 0.225])]
-    return T.Compose(transforms)
-
-
-def get_dataset(split: str, args):
-    from data.dataset_refer_bert import ReferDataset
-    transform = get_transform(args)
-    ds = ReferDataset(args,
-                      split=split,
-                      image_transforms=transform,
-                      target_transforms=None)
-    num_classes = 2
-    return ds, num_classes
-
-
-# IoU calculation for validation
-def IoU(pred, gt):
-    pred = pred.argmax(1)
-
-    intersection = torch.sum(torch.mul(pred, gt))
-    union = torch.sum(torch.add(pred, gt)) - intersection
-
-    if intersection == 0 or union == 0:
-        iou = 0
-    else:
-        iou = float(intersection) / float(union)
-
-    return iou, intersection, union
-
-
-def criterion(input, target):
-    weight = torch.FloatTensor([0.9, 1.1]).cuda()
-    return nn.functional.cross_entropy(input, target, weight=weight)
-
-
-def evaluate(model, data_loader, bert_model):
-    model.eval()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Test:'
-    total_its = 0
-    acc_ious = 0
-
-    # evaluation variables
-    cum_I, cum_U = 0, 0
-    eval_seg_iou_list = [.5, .6, .7, .8, .9]
-    seg_correct = np.zeros(len(eval_seg_iou_list), dtype=np.int32)
-    seg_total = 0
-    mean_IoU = []
-
-    with torch.no_grad():
-        for data in metric_logger.log_every(data_loader, 100, header):
-            total_its += 1
-            image, target, sentences, attentions = data
-            image, target, sentences, attentions = image.cuda(non_blocking=True),\
-                                                   target.cuda(non_blocking=True),\
-                                                   sentences.cuda(non_blocking=True),\
-                                                   attentions.cuda(non_blocking=True)
-
-            sentences = sentences.squeeze(1)
-            attentions = attentions.squeeze(1)
-
-            last_hidden_states = bert_model(sentences, attention_mask=attentions)[0]
-            embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-            attentions = attentions.unsqueeze(dim=-1)  # (B, N_l, 1)
-            output = model(image, embedding, l_mask=attentions)
-            iou, I, U = IoU(output, target)
-            acc_ious += iou
-            mean_IoU.append(iou)
-            cum_I += I
-            cum_U += U
-            for n_eval_iou in range(len(eval_seg_iou_list)):
-                eval_seg_iou = eval_seg_iou_list[n_eval_iou]
-                seg_correct[n_eval_iou] += (iou >= eval_seg_iou)
-            seg_total += 1
-        iou = acc_ious / total_its
-
-    mean_IoU = np.array(mean_IoU)
-    mIoU = np.mean(mean_IoU)
-    print('Final results:')
-    print('Mean IoU is %.2f\n' % (mIoU * 100.))
-    results_str = ''
-    for n_eval_iou in range(len(eval_seg_iou_list)):
-        results_str += '    precision@%s = %.2f\n' % \
-                       (str(eval_seg_iou_list[n_eval_iou]), seg_correct[n_eval_iou] * 100. / seg_total)
-    results_str += '    overall IoU = %.2f\n' % (cum_I * 100. / cum_U)
-    print(results_str)
-
-    return 100 * iou, 100 * cum_I / cum_U
-
-
-def train_one_epoch(model, criterion, optimizer, data_loader, lr_scheduler, epoch, print_freq,
-                    iterations, bert_model):
-    model.train()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
-    header = 'Epoch: [{}]'.format(epoch)
-    train_loss = 0
-    total_its = 0
-
-    for data in metric_logger.log_every(data_loader, print_freq, header):
-        total_its += 1
-        image, target, sentences, attentions = data
-        image, target, sentences, attentions = image.cuda(non_blocking=True),\
-                                               target.cuda(non_blocking=True),\
-                                               sentences.cuda(non_blocking=True),\
-                                               attentions.cuda(non_blocking=True)
-
-        sentences = sentences.squeeze(1)
-        attentions = attentions.squeeze(1)
-
-        last_hidden_states = bert_model(sentences, attention_mask=attentions)[0]  # (6, 10, 768)
-        embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-        attentions = attentions.unsqueeze(dim=-1)  # (batch, N_l, 1)
-        output = model(image, embedding, l_mask=attentions)
-
-        loss = criterion(output, target)
-        optimizer.zero_grad()  # set_to_none=True is only available in pytorch 1.6+
-        loss.backward()
-        optimizer.step()
-        lr_scheduler.step()
-
-        train_loss += loss.item()
-        iterations += 1
-        metric_logger.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
-
-        del image, target, sentences, attentions, loss, output, data, last_hidden_states, embedding
-        gc.collect()
-        torch.cuda.empty_cache()
-
-
-# from pytorch_lightning.loggers.base import LightningLoggerBase, rank_zero_experiment
-# from pytorch_lightning.utilities.distributed import rank_zero_only
-#
-#
-# class EvaluationLogger(LightningLoggerBase):
-#     def __init__(self):
-#         LightningLoggerBase.__init__(self)
-#         self.total_its = 0
-#         self.acc_ious = 0
-#         self.cum_I, self.cum_U = 0, 0
-#         self.eval_seg_iou_list = [.5, .6, .7, .8, .9]
-#         self.seg_correct = [0 for _ in range(len(self.eval_seg_iou_list))]
-#         self.seg_total = 0
-#         self.mean_IoU = []
-#
-#     @property
-#     def name(self):
-#         return 'EvaluationLogger'
-#
-#     @property
-#     def version(self):
-#         # Return the experiment version, int or str.
-#         return "0.1"
-#
-#     @rank_zero_only
-#     def log_metrics(self, metrics, step):
-#         # metrics is a dictionary of metric names and values
-#         # your code to record metrics goes here
-#         self.total_its += 1
-#         self.acc_ious += metrics['iou']
-#         self.mean_IoU.append(metrics['iou'])
-#         self.cum_I += metrics['i']
-#         self.cum_U += metrics['u']
-#
-#         for i, eval_seg_iou in enumerate(self.eval_seg_iou_list):
-#             self.seg_correct[i] += (metrics['iou'] >= eval_seg_iou)
-#         self.seg_total += 1
-#
-#         res = {'mean IoU': np.mean(np.array(self.mean_IoU)) * 100.}
-#         for i, eval_seg_iou in range(len(self.eval_seg_iou_list)):
-#             res['precision@{:.2f}'.format(eval_seg_iou)] = self.seg_correct[i] * 100. / self.seg_total
-#         res['overall IoU'] = self.cum_I * 100. / self.cum_U
-#         super(EvaluationLogger, self).log_metrics(res, step)
-
-
-class LAVTPL(pl.LightningModule):
-    def __init__(self, args, num_train_steps):
-        pl.LightningModule.__init__(self)
-        self.args = args
-        print(args.model)
-        self.num_train_steps = num_train_steps
-
-        self.model = segmentation.__dict__[args.model](pretrained=args.pretrained_swin_weights, args=args)
-        self.bert_model = BertModel.from_pretrained(args.ck_bert)
-
-        # if args.resume:
-        #     checkpoint = torch.load(args.resume, map_location='cpu')
-        #     self.model.load_state_dict(checkpoint['model'])
-        #     self.bert_model.load_state_dict(checkpoint['bert_model'])
-
-        backbone_no_decay = list()
-        backbone_decay = list()
-        for name, m in self.model.backbone.named_parameters():
-            if 'norm' in name or 'absolute_pos_embed' in name or 'relative_position_bias_table' in name:
-                backbone_no_decay.append(m)
-            else:
-                backbone_decay.append(m)
-
-        self.params_to_optimize = [
-            {'params': backbone_no_decay, 'weight_decay': 0.0},
-            {'params': backbone_decay},
-            {"params": [p for p in self.model.classifier.parameters() if p.requires_grad]},
-            # the following are the parameters of bert
-            {"params": reduce(operator.concat,
-                              [[p for p in self.bert_model.encoder.layer[i].parameters() if p.requires_grad]
-                               for i in range(10)])}]
-
-        # start_time = time.time()
-        # iterations = 0
-        # best_oIoU = -0.1
-
-        # if args.resume:
-        #     optimizer.load_state_dict(checkpoint['optimizer'])
-        #     lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        #     resume_epoch = checkpoint['epoch']
-        # else:
-        #     resume_epoch = -999
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.params_to_optimize,
-            lr=self.args.lr,
-            weight_decay=self.args.weight_decay,
-            amsgrad=self.args.amsgrad)
-
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer,
-            lambda x: (1 - x / (self.num_train_steps * args.epochs)) ** 0.9)
-        return [optimizer], [lr_scheduler]
-
-    def training_step(self, batch, batch_idx):
-        image, target, sentences, attentions = batch
-        sentences = sentences.squeeze(1)
-        attentions = attentions.squeeze(1)
-
-        last_hidden_states = self.bert_model(sentences, attention_mask=attentions)[0]  # (6, 10, 768)
-        embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-        attentions = attentions.unsqueeze(dim=-1)  # (batch, N_l, 1)
-        output = self.model(image, embedding, l_mask=attentions)
-
-        loss = criterion(output, target)
-        self.log('train/loss', loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        image, target, sentences, attentions = batch
-
-        sentences = sentences.squeeze(1)
-        attentions = attentions.squeeze(1)
-
-        last_hidden_states = self.bert_model(sentences, attention_mask=attentions)[0]
-        embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-        attentions = attentions.unsqueeze(dim=-1)  # (B, N_l, 1)
-        output = self.model(image, embedding, l_mask=attentions)
-
-        pred = output.argmax(1)
-        intersection = torch.sum(torch.mul(pred, target))
-        union = torch.sum(torch.add(pred, target)) - intersection
-        self.log('val/loss', criterion(output, target), on_step=False, on_epoch=True)
-        return {'i': intersection, 'u': union}
-
-    def validation_step_end(self, batch_parts):
-        intersection = batch_parts['i']
-        union = batch_parts['u']
-        if intersection == 0 or union == 0:
-            iou = 0.
-        else:
-            iou = float(intersection) / float(union)
-        return {'i': intersection, 'u': union, 'iou': iou}
-
-    def validation_epoch_end(self, validation_step_outputs):
-        num_iter = 0
-        cum_I, cum_U = 0, 0
-        acc_ious = 0.
-        mean_IoU = []
-        seg_correct = [0 for _ in range(len(EVAL_IOUS))]
-
-        for output in validation_step_outputs:
-            num_iter += 1
-            cum_I += output['i']
-            cum_U += output['u']
-            acc_ious += output['iou']
-            mean_IoU.append(output['iou'])
-
-            for i, eval_iou in enumerate(EVAL_IOUS):
-                seg_correct[i] += (output['iou'] >= eval_iou)
-
-            self.log('mean iou', np.mean(np.array(mean_IoU)) * 100., on_step=False, on_epoch=True)
-            for i, eval_iou in enumerate(EVAL_IOUS):
-                self.log('precision@{:.2f}'.format(eval_iou), seg_correct[i] * 100. / num_iter,
-                         on_step=False, on_epoch=True)
-            self.log('overall iou', cum_I * 100. / cum_U, on_step=False, on_epoch=True)
+from args import get_parser
+from lavt import LAVTPL
+from utils import get_dataset
 
 
 def main(args):
-    train_dataset, num_classes = get_dataset('train', args=args)
-    val_dataset, _ = get_dataset('val', args=args)
+    train_dataset, num_classes = get_dataset(split='train', args=args, eval_mode=False)
+    val_dataset, _ = get_dataset(split='val', args=args, eval_mode=False)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -338,12 +29,22 @@ def main(args):
     wandb_logger = WandbLogger(project='lavt')
     model = LAVTPL(args=args, num_train_steps=len(train_loader))
 
+    filename_fmt = '{}-{}-'.format(args.model_id, args.dataset) + '{epoch:02d}'
+    checkpoint_callback = ModelCheckpoint(
+        monitor='overall iou',
+        dirpath='checkpoints/',
+        filename=filename_fmt,
+        save_top_k=3,
+        mode='max')
+
     trainer = pl.Trainer(
         logger=wandb_logger,
         max_epochs=args.epochs,
         gpus=args.gpus,
         strategy='ddp',
-        sync_batchnorm=True)
+        sync_batchnorm=True,
+        num_sanity_val_steps=0,
+        callbacks=[checkpoint_callback, ])
     trainer.fit(
         model=model,
         train_dataloaders=train_loader,
@@ -351,10 +52,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-    from args import get_parser
     parser = get_parser()
     args = parser.parse_args()
-    # set up distributed learning
-    # utils.init_distributed_mode(args)
-    print('Image size: {}'.format(str(args.img_size)))
     main(args)

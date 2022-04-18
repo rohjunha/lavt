@@ -1,11 +1,12 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
-import numpy as np
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from .mmcv_custom import load_checkpoint
 from mmseg.utils import get_root_logger
+from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+
+from .mmcv_custom import load_checkpoint
 
 
 class Mlp(nn.Module):
@@ -251,6 +252,7 @@ class PatchMerging(nn.Module):
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
+
     def __init__(self, dim, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
@@ -375,7 +377,8 @@ class MultiModalSwinTransformer(nn.Module):
             patch_size = to_2tuple(patch_size)
             patches_resolution = [pretrain_img_size[0] // patch_size[0], pretrain_img_size[1] // patch_size[1]]
 
-            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, embed_dim, patches_resolution[0], patches_resolution[1]))
+            self.absolute_pos_embed = nn.Parameter(
+                torch.zeros(1, embed_dim, patches_resolution[0], patches_resolution[1]))
             trunc_normal_(self.absolute_pos_embed, std=.02)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -613,7 +616,7 @@ class PWAM(nn.Module):
         self.vis_project = nn.Sequential(nn.Conv1d(dim, dim, 1, 1),  # the init function sets bias to 0 if bias is True
                                          nn.GELU(),
                                          nn.Dropout(dropout)
-                                        )
+                                         )
 
         self.image_lang_att = SpatialImageLanguageAttention(v_in_channels,  # v_in
                                                             l_in_channels,  # l_in
@@ -696,18 +699,18 @@ class SpatialImageLanguageAttention(nn.Module):
         key = key * l_mask  # (B, key_channels, N_l)
         value = value * l_mask  # (B, self.value_channels, N_l)
         n_l = value.size(-1)
-        query = query.reshape(B, HW, self.num_heads, self.key_channels//self.num_heads).permute(0, 2, 1, 3)
+        query = query.reshape(B, HW, self.num_heads, self.key_channels // self.num_heads).permute(0, 2, 1, 3)
         # (b, num_heads, H*W, self.key_channels//self.num_heads)
-        key = key.reshape(B, self.num_heads, self.key_channels//self.num_heads, n_l)
+        key = key.reshape(B, self.num_heads, self.key_channels // self.num_heads, n_l)
         # (b, num_heads, self.key_channels//self.num_heads, n_l)
-        value = value.reshape(B, self.num_heads, self.value_channels//self.num_heads, n_l)
+        value = value.reshape(B, self.num_heads, self.value_channels // self.num_heads, n_l)
         # # (b, num_heads, self.value_channels//self.num_heads, n_l)
         l_mask = l_mask.unsqueeze(1)  # (b, 1, 1, n_l)
 
         sim_map = torch.matmul(query, key)  # (B, self.num_heads, H*W, N_l)
         sim_map = (self.key_channels ** -.5) * sim_map  # scaled dot product
 
-        sim_map = sim_map + (1e4*l_mask - 1e4)  # assign a very small number to padding positions
+        sim_map = sim_map + (1e4 * l_mask - 1e4)  # assign a very small number to padding positions
         sim_map = F.softmax(sim_map, dim=-1)  # (B, num_heads, h*w, N_l)
         out = torch.matmul(sim_map, value.permute(0, 1, 3, 2))  # (B, num_heads, H*W, self.value_channels//num_heads)
         out = out.permute(0, 2, 1, 3).contiguous().reshape(B, HW, self.value_channels)  # (B, H*W, value_channels)

@@ -1,14 +1,9 @@
-import torch
-import torch.nn as nn
-from .mask_predictor import SimpleDecoding
-from .backbone import MultiModalSwinTransformer
 from ._utils import LAVT
+from .backbone import MultiModalSwinTransformer
+from .mask_predictor import SimpleDecoding
 
-__all__ = ['lavt']
 
-
-# LAVT
-def _segm_lavt(pretrained, args):
+def lavt(pretrained, args):
     # initialize the SwinTransformer backbone with the specified version
     if args.swin_type == 'tiny':
         embed_dim = 96
@@ -58,17 +53,8 @@ def _segm_lavt(pretrained, args):
 
     model_map = [SimpleDecoding, LAVT]
 
-    classifier = model_map[0](8*embed_dim)
+    classifier = model_map[0](8 * embed_dim)
     base_model = model_map[1]
 
     model = base_model(backbone, classifier)
     return model
-
-
-def _load_model_lavt(pretrained, args):
-    model = _segm_lavt(pretrained, args)
-    return model
-
-
-def lavt(pretrained='', args=None):
-    return _load_model_lavt(pretrained, args)
