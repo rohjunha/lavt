@@ -22,11 +22,14 @@ functions for using `DistributedDataParallel`.
 defined in `backbone.py` and the simple mask decoder defined in `mask_predictor.py`,
 and `segmentation.py` provides a model interface and functions used to initialize the model.
 
+
 ## Setting Up
 ### Preliminaries
 The code has been verified to work with PyTorch v1.7.1 and Python 3.7.
 1. Clone this repository.
 2. Change directory to root of this repository.
+
+
 ### Package Dependencies
 1. Create a new Conda environment with Python 3.7 then activate it:
 ```shell
@@ -36,7 +39,7 @@ conda activate lavt
 
 2. Install PyTorch v1.7.1 with a CUDA version that works on your cluster/machine (CUDA 10.2 is used in this example):
 ```shell
-conda install pytorch==1.7.1 torchvision==0.8.2 torchaudio==0.7.2 cudatoolkit=10.2 -c pytorch
+conda install pytorch==1.11.1 torchvision cudatoolkit=11.3 -c pytorch
 ```
 
 3. Install the packages in `requirements.txt` via `pip`:
@@ -54,6 +57,7 @@ from the [refer](https://github.com/lichengunc/refer) public API.
 Please use the first downloading link *2014 Train images [83K/13GB]*, and extract
 the downloaded `train_2014.zip` file to `./refer/data/images/mscoco/images`.
 
+
 ### The Initialization Weights for Training
 1. Create the `./pretrained_weights` directory where we will be storing the weights.
 ```shell
@@ -63,6 +67,7 @@ mkdir ./pretrained_weights
 the Swin Transformer](https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_base_patch4_window12_384_22k.pth),
 and put the `pth` file in `./pretrained_weights`.
 These weights are needed for training to initialize the model.
+
 
 ### Trained Weights of LAVT for Testing
 1. Create the `./checkpoints` directory where we will be storing the weights.
@@ -75,27 +80,28 @@ mkdir ./checkpoints
 |---|---|---|---|
 
 
-
-
 ## Training
-We use `DistributedDataParallel` from PyTorch.
+We use `ddp` strategy from `pytorch-lightning`.
+It abstracts low-level implementation of `DistributedDataParallel` from `PyTorch`.
+
 To run on 4 GPUs (with IDs 0, 1, 2, and 3) on a single node:
 ```shell
 mkdir ./models
-
 mkdir ./models/refcoco
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node 4 --master_port 12345 train.py --model lavt --dataset refcoco --model_id refcoco --batch-size 8 --lr 0.00005 --wd 1e-2 --swin_type base --pretrained_swin_weights ./pretrained_weights/swin_base_patch4_window12_384_22k.pth --epochs 40 --img_size 480 2>&1 | tee ./models/refcoco/output
+CUDA_VISIBLE_DEVICES=0,1,2,3 python run.py --mode train --dataset refcoco --model_id refcoco --batch-size 8 2>&1 | tee ./models/refcoco/output
 
 mkdir ./models/refcoco+
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node 4 --master_port 12345 train.py --model lavt --dataset refcoco+ --model_id refcoco+ --batch-size 8 --lr 0.00005 --wd 1e-2 --swin_type base --pretrained_swin_weights ./pretrained_weights/swin_base_patch4_window12_384_22k.pth --epochs 40 --img_size 480 2>&1 | tee ./models/refcoco+/output
+CUDA_VISIBLE_DEVICES=0,1,2,3 python run.py --mode train --dataset refcoco+ --model_id refcoco+ --batch-size 8  2>&1 | tee ./models/refcoco+/output
 
 mkdir ./models/gref_umd
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node 4 --master_port 12345 train.py --model lavt --dataset refcocog --splitBy umd --model_id gref_umd --batch-size 8 --lr 0.00005 --wd 1e-2 --swin_type base --pretrained_swin_weights ./pretrained_weights/swin_base_patch4_window12_384_22k.pth --epochs 40 --img_size 480 2>&1 | tee ./models/gref_umd/output
+CUDA_VISIBLE_DEVICES=0,1,2,3 python run.py --mode train --dataset refcocog --splitBy umd --model_id gref_umd --batch-size 8 2>&1 | tee ./models/gref_umd/output
 
 mkdir ./models/gref_google
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node 4 --master_port 12345 train.py --model lavt --dataset refcocog --splitBy google --model_id gref_google --batch-size 8 --lr 0.00005 --wd 1e-2 --swin_type base --pretrained_swin_weights ./pretrained_weights/swin_base_patch4_window12_384_22k.pth --epochs 40 --img_size 480 2>&1 | tee ./models/gref_google/output
+CUDA_VISIBLE_DEVICES=0,1,2,3 python run.py --mode train --dataset refcocog --splitBy google --model_id gref_google --batch-size 8 2>&1 | tee ./models/gref_google/output
 ```
-* *--model* is a pre-defined model name. Currently there is only the `lavt` option.
+
+* *--mode* is a mode of execution (`train` or `test`). Default is set to `train`.
+* *--model* is a pre-defined model name. Currently, there is only the `lavt` option.
 * *--dataset* is the dataset name. One can choose from `refcoco`, `refcoco+`, and `refcocog`.
 * *--splitBy* needs to be specified if and only if the dataset is G-Ref (which is also called RefCOCOg).
 `umd` identifies the UMD partition and `google` identifies the Google partition.
@@ -108,24 +114,26 @@ One can choose from `tiny`, `small`, `base`, and `large`. The default is `base`.
 This is because we use `tee` to redirect `stdout` and `stderr` to `./models/[args.model_id]/output` for logging.
 This is a nuisance and should be resolved in the future, *i.e.*, using a proper logger or a bash script for initiating training.
 
+
 ## Testing
 For RefCOCO/RefCOCO+, run one of
 ```shell
-python test.py --model lavt --swin_type base --dataset refcoco --split val --resume ./checkpoints/refcoco.pth --workers 4 --ddp_trained_weights --window12 --img_size 480
-python test.py --model lavt --swin_type base --dataset refcoco+ --split val --resume ./checkpoints/refcoco+.pth --workers 4 --ddp_trained_weights --window12 --img_size 480
+python run.py --mode test --dataset refcoco --split val --resume ./checkpoints/refcoco.pth
+python run.py --mode test --dataset refcoco+ --split val --resume ./checkpoints/refcoco+.pth
 ```
 * *--split* is the subset to evaluate, and one can choose from `val`, `testA`, and `testB`.
 * *--resume* is the path to the weights of a trained model.
 
 For G-Ref (UMD)/G-Ref (Google), run one of
 ```shell
-python test.py --model lavt --swin_type base --dataset refcocog --splitBy umd --split val --resume ./checkpoints/gref_umd.pth --workers 4 --ddp_trained_weights --window12 --img_size 480
-python test.py --model lavt --swin_type base --dataset refcocog --splitBy google --split val --resume ./checkpoints/gref_google.pth --workers 4 --ddp_trained_weights --window12 --img_size 480
+python run.py --mode test --dataset refcocog --splitBy umd --split val --resume ./checkpoints/gref_umd.pth
+python run.py --mode test --dataset refcocog --splitBy google --split val --resume ./checkpoints/gref_google.pth
 ```
 * *--splitBy* specifies the partition to evaluate.
 One can choose from `umd` or `google`.
 * *--split* is the subset (according to the specified partition) to evaluate, and one can choose from `val` and `test` for the UMD partition, and only `val` for the Google partition..
 * *--resume* is the path to the weights of a trained model.
+
 
 ## Results
 The complete test results of the released models are summarized as follows:
@@ -156,12 +164,6 @@ The overall IoU on the val set generally lies in the range of 72.73±0.5%.
 }
 ```
 
-## Issues
-With this version of the code, we observe a low GPU utility during training, and may fix this in the near future.
-If one wants to try fixing this problem immediately, a thing to try is moving BERT into the overall model
-(*i.e.*, declaring and using BERT as a text encoder variable in `class _LAVTSimpleDecode` in `./lib/_utils.py`).
-We have not fully validated this change (therefore have not implemented it in this release),
-but GPU utility and results both seem to have improved in some preliminary experiments.
 
 ## Contributing
 We appreciate all contributions.
@@ -170,6 +172,7 @@ It helps the project if you could
 - give a :+1: on issues reported by others that are relevant to you,
 - answer issues reported by others for which you have found solutions,
 - and implement helpful new features or improve the code otherwise with pull requests.
+
 
 ## Acknowledgements
 Code in this repository is built upon several public repositories.
