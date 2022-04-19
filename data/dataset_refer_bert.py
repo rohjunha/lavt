@@ -1,22 +1,18 @@
 import os
+from argparse import Namespace
 
 import numpy as np
 import torch
 import torch.utils.data as data
 from PIL import Image
 
-from args import get_parser
 from bert.tokenization_bert import BertTokenizer
 from refer.refer import REFER
-
-# Dataset configuration initialization
-parser = get_parser()
-args = parser.parse_args()
 
 
 class ReferDataset(data.Dataset):
     def __init__(self,
-                 args,
+                 args: Namespace,
                  image_transforms=None,
                  target_transforms=None,
                  split='train',
@@ -76,6 +72,13 @@ class ReferDataset(data.Dataset):
         return len(self.ref_ids)
 
     def __getitem__(self, index):
+        """
+        Returns a tuple of items from the index.
+        @img: float32, (3, 480, 480)
+        @target: int64, (480, 480)
+        @tensor_embeddings: int64, (1, 20)
+        @attention_mask: int64, (1, 20)
+        """
         this_ref_id = self.ref_ids[index]
         this_img_id = self.refer.getImgIds(this_ref_id)
         this_img = self.refer.Imgs[this_img_id[0]]

@@ -22,23 +22,22 @@ getMask    - get mask and area of the referred object given ref
 showMask   - show mask of the referred object given ref
 """
 
-import sys
-import os.path as osp
-import json
-import pickle as pickle
-import time
 import itertools
-import skimage.io as io
+import json
+import os.path as osp
+import pickle as pickle
+import sys
+import time
+
 import matplotlib.pyplot as plt
+import numpy as np
+import skimage.io as io
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon, Rectangle
-from pprint import pprint
-import numpy as np 
 from pycocotools import mask
 
 
 class REFER:
-
     def __init__(self, data_root, dataset='refcoco', splitBy='unc'):
         # provide data_root folder which contains refclef, refcoco, refcoco+ and refcocog
         # also provide dataset name and splitBy information
@@ -291,7 +290,6 @@ class REFER:
         area = sum(mask.area(rle))  # should be close to ann['area']
         return {'mask': m, 'area': area}
 
-
     def showMask(self, ref):
         M = self.getMask(ref)
         msk = M['mask']
@@ -314,4 +312,3 @@ if __name__ == '__main__':
         plt.figure()
         refer.showRef(ref, seg_box='box')
         plt.show()
-

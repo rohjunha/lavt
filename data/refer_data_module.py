@@ -16,6 +16,12 @@ def get_transform(args):
     return T.Compose(transforms)
 
 
+def get_inv_transform():
+    transforms = [T.Normalize(mean=[0, 0, 0], std=[1./0.229, 1./0.224, 1./0.225]),
+                  T.Normalize(mean=[-0.485, -0.456, -0.406], std=[1, 1, 1])]
+    return T.Compose(transforms)
+
+
 def get_dataset(split: str, args, eval_mode: bool):
     transform = get_transform(args)
     ds = ReferDataset(args,
