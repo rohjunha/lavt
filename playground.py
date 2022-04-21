@@ -1,14 +1,17 @@
 from pathlib import Path
 from typing import Union, Tuple, List
 
+import imageio
 import numpy as np
 import torch
 from PIL import Image
 from torch import Tensor
+from torch.utils.data import DataLoader
 
 from args import get_parser
 from data.dataset_refer_bert import ReferDataset
-from data.refer_data_module import get_transform, get_inv_transform
+from data.refer_data_module import get_transform, get_inv_transform, get_dataset, ReferDataModule
+from lavt import LAVT
 
 
 def mkdir(p: Union[str, Path]) -> Path:
@@ -78,7 +81,7 @@ def visualize_cached_items():
         bim.save('./.cache/{:03d}_mask.png'.format(index))
 
 
-def main():
+def inspect_cached_items():
     items = Cache().fetch_cache()
     for index, (image, target, embeddings, mask) in enumerate(items[:10]):
         print(image.shape, image.dtype)
@@ -90,5 +93,78 @@ def main():
             break
 
 
+def test_items_from_dataset():
+    parser = get_parser()
+    args = parser.parse_args()
+    dataset, _ = get_dataset(split='train', args=args, eval_mode=True)
+    img, target, tensor_embeddings, attention_mask = dataset[1]
+    print(img.shape, img.dtype)
+    print(target.shape, target.dtype)
+    print(tensor_embeddings.shape, tensor_embeddings.dtype)
+    print(attention_mask.shape, attention_mask.dtype)
+
+    # print(tensor_embeddings)
+    # print(attention_mask)
+    #
+    # from bert.tokenization_bert import BertTokenizer
+    # tokenizer = BertTokenizer.from_pretrained(args.bert_tokenizer)
+    # print(tokenizer.decode([101, 1996, 3203, 2007, 1996, 2630, 3797, 102], skip_special_tokens=True))
+    # print(tokenizer.decode([101, 3203, 1059, 2067, 2000, 2149, 102], skip_special_tokens=True))
+    # print(tokenizer.decode([101, 2630, 3797, 102], skip_special_tokens=True))
+
+
+def run_custom_test_from_checkpoint():
+    parser = get_parser()
+    args = parser.parse_args()
+    dataset, _ = get_dataset(split='test', args=args, eval_mode=True)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    device = 'cuda:0'
+
+    assert args.resume
+    print('Load the model from {}'.format(args.resume))
+    model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=0)
+    model.cuda(device=device)
+
+    inv_transforms = get_inv_transform()
+    from bert.tokenization_bert import BertTokenizer
+    tokenizer = BertTokenizer.from_pretrained(args.bert_tokenizer)
+
+    with torch.no_grad():
+        for i, data in enumerate(dataloader):
+            image, target, sentences, attentions = data
+            image, target, sentences, attentions = image.to(device), target.to(device), \
+                                                   sentences.to(device), attentions.to(device)
+
+            sentences = sentences.squeeze(1)
+            attentions = attentions.squeeze(1)
+            target = target.cpu().data.numpy()
+
+            image_, _ = inv_transforms(image, target)
+            image_ = image_[0, ...].permute(1, 2, 0).cpu()
+            image_ = (image_ * 255).to(dtype=torch.uint8).numpy()
+            imageio.imwrite('visualization/{:05d}_image.png'.format(i), image_)
+            sentence_list = []
+
+            for j in range(sentences.size(-1)):
+                last_hidden_states = model.bert_model(sentences[:, :, j], attention_mask=attentions[:, :, j])[0]
+                embedding = last_hidden_states.permute(0, 2, 1)
+                output = model.model(image, embedding, l_mask=attentions[:, :, j].unsqueeze(-1))
+                output = output.cpu()
+                output_mask = output.argmax(1).data.numpy()
+
+                # print(output_mask.shape, output_mask.dtype, np.min(output_mask), np.max(output_mask))
+                # print(target.shape, target.dtype, np.min(target), np.max(target))
+                sentence_ = sentences[:, :, j].cpu().data.numpy().tolist()[0]
+                sentence = tokenizer.decode(sentence_, skip_special_tokens=True)
+                sentence_list.append(sentence)
+                imageio.imwrite('visualization/{:05d}_pred{}.png'.format(i, j), output_mask[0, ...].astype(np.uint8) * 255)
+                imageio.imwrite('visualization/{:05d}_targ.png'.format(i), target[0, ...].astype(np.uint8) * 255)
+            with open('visualization/{:05d}_sen.txt'.format(i), 'w') as file:
+                file.write('\n'.join(sentence_list))
+
+            if i > 9:
+                break
+
+
 if __name__ == '__main__':
-    main()
+    run_custom_test_from_checkpoint()

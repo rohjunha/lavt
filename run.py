@@ -37,13 +37,13 @@ def test(args):
 
     assert args.resume
     print('Load the model from {}'.format(args.resume))
-    model = LAVT.load_from_checkpoint(args.resume)
+    model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=0)
 
     trainer = pl.Trainer(
         gpus=args.gpus,
-        strategy='ddp',
         num_sanity_val_steps=0)
     trainer.test(model=model, datamodule=refer_data)
+    # trainer.validate(model=model, datamodule=refer_data)
 
 
 if __name__ == "__main__":

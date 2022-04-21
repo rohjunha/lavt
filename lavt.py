@@ -1,6 +1,7 @@
 import operator
 from argparse import Namespace
 from functools import reduce
+from itertools import chain
 from typing import Tuple
 
 import numpy as np
@@ -93,11 +94,20 @@ class LAVT(pl.LightningModule):
         self.log('val/loss', criterion(output, target), on_step=False, on_epoch=True)
         return {'i': intersection, 'u': union}
 
+    def validation_step_end(self, batch_parts):
+        intersection = batch_parts['i']
+        union = batch_parts['u']
+        if intersection == 0 or union == 0:
+            iou = 0.
+        else:
+            iou = float(intersection) / float(union)
+        return {'i': intersection, 'u': union, 'iou': iou}
+
     def test_step(self, batch, batch_idx):
         image, target, sentences, attentions = items_from_batch(batch)
 
-        # todo: implement this.
         target = target.cpu().data.numpy()
+        res = []
         for j in range(sentences.size(-1)):
             last_hidden_states = self.bert_model(sentences[:, :, j], attention_mask=attentions[:, :, j])[0]
             embedding = last_hidden_states.permute(0, 2, 1)
@@ -110,22 +120,17 @@ class LAVT(pl.LightningModule):
                 iou = 0.0
             else:
                 iou = i * 1.0 / u
-            yield {'i': i, 'u': u, 'iou': iou}
+            res.append({'i': i, 'u': u, 'iou': iou})
+        return res
 
     def test_epoch_end(self, test_step_outputs) -> None:
         self.accumulate_outputs(test_step_outputs)
 
-    def validation_step_end(self, batch_parts):
-        intersection = batch_parts['i']
-        union = batch_parts['u']
-        if intersection == 0 or union == 0:
-            iou = 0.
-        else:
-            iou = float(intersection) / float(union)
-        return {'i': intersection, 'u': union, 'iou': iou}
-
     def validation_epoch_end(self, validation_step_outputs):
         self.accumulate_outputs(validation_step_outputs)
+
+    def test_epoch_end(self, test_step_outputs):
+        self.accumulate_outputs(list(chain.from_iterable(test_step_outputs)))
 
     def accumulate_outputs(self, outputs):
         num_iter = 0
