@@ -4,8 +4,9 @@ from typing import Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
-from utils import transforms as T
 from data.dataset_refer_bert import ReferDataset
+from data.sunrefer_dataset import SUNREFERDataset
+from utils import transforms as T
 
 
 def get_transform(args):
@@ -23,13 +24,18 @@ def get_inv_transform():
 
 
 def get_dataset(split: str, args, eval_mode: bool):
-    transform = get_transform(args)
-    ds = ReferDataset(args,
-                      split=split,
-                      image_transforms=transform,
-                      target_transforms=None,
-                      eval_mode=eval_mode)
     num_classes = 2
+    if args.dataset in {'refcoco', 'refcoco+', 'refcocog'}:
+        transform = get_transform(args)
+        ds = ReferDataset(args,
+                          split=split,
+                          image_transforms=transform,
+                          target_transforms=None,
+                          eval_mode=eval_mode)
+    elif args.dataset == 'sunrefer':
+        ds = SUNREFERDataset(split=split, image_size=args.img_size)
+    else:
+        raise TypeError('invalid dataset: {}'.format(args.dataset))
     return ds, num_classes
 
 

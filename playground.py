@@ -1,3 +1,6 @@
+from bert.tokenization_bert import BertTokenizer
+import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Union, Tuple, List
 
@@ -134,6 +137,12 @@ def run_custom_test_from_checkpoint():
             image, target, sentences, attentions = data
             image, target, sentences, attentions = image.to(device), target.to(device), \
                                                    sentences.to(device), attentions.to(device)
+            print(image.shape, target.shape, sentences.shape, attentions.shape)
+            print(image.dtype, target.dtype, sentences.dtype, attentions.dtype)
+            # (bsize, 3, img_size, img_size)
+            # (bsize, img_size, img_size)
+            # (bsize, 1, max_len, num_anno)
+            # (bsize, 1, max_len, num_anno)
 
             sentences = sentences.squeeze(1)
             attentions = attentions.squeeze(1)
@@ -166,5 +175,91 @@ def run_custom_test_from_checkpoint():
                 break
 
 
+def convert_sunrefer_to_lavt():
+    import cv2
+
+    args = get_parser().parse_args()
+    transforms = get_transform(args)
+    inv_transforms = get_inv_transform()
+    max_len = 50
+
+    device = 'cuda:0'
+    in_refer_path = Path('/home/junha/projects/Refer-it-in-RGBD/data/sunrefer_singleRGBD/SUNREFER_v2.json')
+    in_image_dir = Path('/home/junha/projects/Refer-it-in-RGBD/sunrgbd/tmp_seg/high_confidence')
+
+    # Read refer data.
+    with open(str(in_refer_path), 'r') as file:
+        refer_data = json.load(file)
+
+    refer_by_image_id = defaultdict(list)
+    for refer_item in refer_data:
+        refer_by_image_id[refer_item['image_id']].append(refer_item['sentence'])
+
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+    print('Load the model from {}'.format(args.resume))
+    model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=0)
+    model.cuda(device=device)
+
+    mask_path_list = sorted(in_image_dir.glob('*.png'))
+    for mask_path in mask_path_list:
+        image_id = mask_path.stem
+        anno = refer_by_image_id[image_id]
+        if not anno:
+            continue
+
+        image_path = in_image_dir / '{}.jpg'.format(image_id)
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        mask = Image.fromarray(mask.astype(np.uint8), mode='P')
+        image = Image.open(str(image_path)).convert('RGB')
+
+        # resize, from PIL to tensor, and mean and std normalization
+        image, target = transforms(image, mask)
+
+        encoded_anno = tokenizer.batch_encode_plus(anno, max_length=max_len, truncation=True, pad_to_max_length=True)
+        sentences = torch.tensor(encoded_anno['input_ids']).permute(1, 0)
+        attentions = torch.tensor(encoded_anno['attention_mask']).permute(1, 0)
+
+        image = image.unsqueeze(0)
+        target = target.unsqueeze(0)
+        sentences = sentences.unsqueeze(0)
+        attentions = attentions.unsqueeze(0)
+
+        image, target, sentences, attentions = image.to(device), target.to(device), \
+                                               sentences.to(device), attentions.to(device)
+        print(image.shape, target.shape, sentences.shape, attentions.shape)
+        print(image.dtype, target.dtype, sentences.dtype, attentions.dtype)
+        # (bsize, 3, img_size, img_size)
+        # (bsize, img_size, img_size)
+        # (bsize, 1, max_len, num_anno)
+        # (bsize, 1, max_len, num_anno)
+
+        target = target.cpu().data.numpy()
+
+        image_, _ = inv_transforms(image, target)
+        image_ = image_[0, ...].permute(1, 2, 0).cpu()
+        image_ = (image_ * 255).to(dtype=torch.uint8).numpy()
+        imageio.imwrite('visualization/{}_image.png'.format(image_id), image_)
+        sentence_list = []
+
+        for j in range(sentences.size(-1)):
+            last_hidden_states = model.bert_model(sentences[:, :, j], attention_mask=attentions[:, :, j])[0]
+            embedding = last_hidden_states.permute(0, 2, 1)
+            output = model.model(image, embedding, l_mask=attentions[:, :, j].unsqueeze(-1))
+            output = output.cpu()
+            output_mask = output.argmax(1).data.numpy()
+
+            # print(output_mask.shape, output_mask.dtype, np.min(output_mask), np.max(output_mask))
+            # print(target.shape, target.dtype, np.min(target), np.max(target))
+            sentence_ = sentences[:, :, j].cpu().data.numpy().tolist()[0]
+            sentence = tokenizer.decode(sentence_, skip_special_tokens=True)
+            sentence_list.append(sentence)
+            imageio.imwrite('visualization/{}_pred{}.png'.format(image_id, j), output_mask[0, ...].astype(np.uint8) * 255)
+            imageio.imwrite('visualization/{}_targ.png'.format(image_id), target[0, ...].astype(np.uint8) * 255)
+        with open('visualization/{}_sen.txt'.format(image_id), 'w') as file:
+            file.write('\n'.join(sentence_list))
+
+
 if __name__ == '__main__':
-    run_custom_test_from_checkpoint()
+    convert_sunrefer_to_lavt()
+    # run_custom_test_from_checkpoint()
