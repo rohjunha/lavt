@@ -11,7 +11,11 @@ def train(args):
     refer_data = ReferDataModule(args)
 
     wandb_logger = WandbLogger(project='lavt')
-    model = LAVT(args=args, num_train_steps=len(refer_data))
+    if args.resume:
+        print('Load the model from {}'.format(args.resume))
+        model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=len(refer_data))
+    else:
+        model = LAVT(args=args, num_train_steps=len(refer_data))
 
     filename_fmt = '{}-{}-'.format(args.model_id, args.dataset) + '{epoch:02d}'
     checkpoint_callback = ModelCheckpoint(
