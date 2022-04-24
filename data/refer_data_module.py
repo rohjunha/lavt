@@ -98,3 +98,29 @@ class ReferDataModule(LightningDataModule):
 
     def __len__(self):
         return len(self.train_dataloader())
+
+
+def fetch_data_loaders(args):
+    train_dataset, num_classes = get_dataset(split='train', args=args, eval_mode=False)
+    val_dataset, _ = get_dataset(split='val', args=args, eval_mode=False)
+    test_dataset, _ = get_dataset(split='test', args=args, eval_mode=True)
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.workers,
+        pin_memory=args.pin_mem,
+        drop_last=True)
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.workers)
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.workers,
+        pin_memory=args.pin_mem,
+        drop_last=False)
+    return train_dataloader, val_dataloader, test_dataloader

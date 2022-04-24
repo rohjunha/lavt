@@ -3,19 +3,19 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from args import get_parser
-from data.refer_data_module import ReferDataModule
+from data.refer_data_module import fetch_data_loaders
 from lavt import LAVT
 
 
 def train(args):
-    refer_data = ReferDataModule(args)
+    train_dl, val_dl, test_dl = fetch_data_loaders(args)
 
     wandb_logger = WandbLogger(project='lavt')
     if args.resume:
         print('Load the model from {}'.format(args.resume))
-        model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=len(refer_data))
+        model = LAVT.load_from_checkpoint(args.resume, args=args, num_train_steps=len(train_dl))
     else:
-        model = LAVT(args=args, num_train_steps=len(refer_data))
+        model = LAVT(args=args, num_train_steps=len(train_dl))
 
     filename_fmt = '{}-{}-'.format(args.model_id, args.dataset) + '{epoch:02d}'
     checkpoint_callback = ModelCheckpoint(
@@ -33,11 +33,12 @@ def train(args):
         sync_batchnorm=True,
         num_sanity_val_steps=0,
         callbacks=[checkpoint_callback, ])
-    trainer.fit(model=model, datamodule=refer_data)
+    trainer.fit(model=model, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
 
 def test(args):
-    refer_data = ReferDataModule(args)
+    # refer_data = ReferDataModule(args)
+    _, _, test_dl = fetch_data_loaders(args)
 
     assert args.resume
     print('Load the model from {}'.format(args.resume))
@@ -46,8 +47,7 @@ def test(args):
     trainer = pl.Trainer(
         gpus=args.gpus,
         num_sanity_val_steps=0)
-    trainer.test(model=model, datamodule=refer_data)
-    # trainer.validate(model=model, datamodule=refer_data)
+    trainer.test(model=model, test_dataloaders=test_dl)
 
 
 if __name__ == "__main__":
