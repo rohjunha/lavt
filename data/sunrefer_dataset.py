@@ -44,9 +44,11 @@ def get_transform(img_size: int):
 class SUNREFERDataset(Dataset):
     def __init__(self, split: str, eval_mode: bool, image_size: int = 480, max_len: int = 50):
         Dataset.__init__(self)
-        self.root_dir = Path('/home/junha/projects/Refer-it-in-RGBD/sunrgbd/tmp_seg')
-        self.db_path = Path('/home/junha/projects/Refer-it-in-RGBD/sunrgbd/tmp_seg/database')
-        self.refer_path = Path('/home/junha/projects/Refer-it-in-RGBD/data/sunrefer_singleRGBD/SUNREFER_v2.json')
+
+        rgbd_refer_dir = Path.home() / 'projects/Refer-it-in-RGBD'
+        self.root_dir = rgbd_refer_dir / 'sunrgbd/tmp_seg'
+        self.db_path = self.root_dir / 'database'
+        self.refer_path = rgbd_refer_dir / 'data/sunrefer_singleRGBD/SUNREFER_v2.json'
         self.eval_mode = eval_mode
 
         self.db = InstanceStorage(read_only=True, db_path=self.db_path)
