@@ -2,6 +2,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -41,11 +42,12 @@ def get_transform(img_size: int):
 
 
 class SUNREFERDataset(Dataset):
-    def __init__(self, split: str, image_size: int = 480, max_len: int = 50):
+    def __init__(self, split: str, eval_mode: bool, image_size: int = 480, max_len: int = 50):
         Dataset.__init__(self)
         self.root_dir = Path('/home/junha/projects/Refer-it-in-RGBD/sunrgbd/tmp_seg')
         self.db_path = Path('/home/junha/projects/Refer-it-in-RGBD/sunrgbd/tmp_seg/database')
         self.refer_path = Path('/home/junha/projects/Refer-it-in-RGBD/data/sunrefer_singleRGBD/SUNREFER_v2.json')
+        self.eval_mode = eval_mode
 
         self.db = InstanceStorage(read_only=True, db_path=self.db_path)
         self.data_idx_path = self.root_dir / '{}_data_idx.txt'.format(split)
@@ -86,6 +88,11 @@ class SUNREFERDataset(Dataset):
         seg = Image.fromarray(self.db.get_seg(image_id) > 0, 'P')
         image, target = self.transforms(rgb, seg)
         sentences, attentions = self.refer_data[image_id]
-        sentences = sentences.unsqueeze(0)
-        attentions = attentions.unsqueeze(0)
+        if self.eval_mode:
+            sentences = sentences.unsqueeze(0)
+            attentions = attentions.unsqueeze(0)
+        else:
+            rand_idx = np.random.choice(sentences.shape[1])
+            sentences = sentences[:, rand_idx]
+            attentions = attentions[:, rand_idx]
         return image, target, sentences, attentions

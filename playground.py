@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from args import get_parser
 from data.dataset_refer_bert import ReferDataset
-from data.refer_data_module import get_transform, get_inv_transform, get_dataset, ReferDataModule
+from data.refer_data_module import get_transform, get_inv_transform, get_dataset, ReferDataModule, fetch_data_loaders
 from lavt import LAVT
 
 
@@ -174,7 +174,6 @@ def run_custom_test_from_checkpoint():
             if i > 9:
                 break
 
-
 def convert_sunrefer_to_lavt():
     import cv2
 
@@ -260,6 +259,22 @@ def convert_sunrefer_to_lavt():
             file.write('\n'.join(sentence_list))
 
 
+def check_dataset():
+    args = get_parser().parse_args()
+    train_dl, val_dl, test_dl = fetch_data_loaders(args)
+    model = LAVT(args=args, num_train_steps=len(train_dl))
+
+    import pytorch_lightning as pl
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        gpus=args.gpus,
+        strategy='ddp',
+        sync_batchnorm=True,
+        num_sanity_val_steps=0)
+    trainer.fit(model=model, train_dataloaders=train_dl, val_dataloaders=val_dl)
+
+
 if __name__ == '__main__':
-    convert_sunrefer_to_lavt()
+    check_dataset()
+    # convert_sunrefer_to_lavt()
     # run_custom_test_from_checkpoint()

@@ -33,7 +33,7 @@ def get_dataset(split: str, args, eval_mode: bool):
                           target_transforms=None,
                           eval_mode=eval_mode)
     elif args.dataset == 'sunrefer':
-        ds = SUNREFERDataset(split=split, image_size=args.img_size)
+        ds = SUNREFERDataset(split=split, eval_mode=eval_mode, image_size=args.img_size)
     else:
         raise TypeError('invalid dataset: {}'.format(args.dataset))
     return ds, num_classes
