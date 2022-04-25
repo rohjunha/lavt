@@ -1,7 +1,6 @@
-import numpy as np
-from PIL import Image
 import random
 
+import numpy as np
 import torch
 from torchvision import transforms as T
 from torchvision.transforms import functional as F
@@ -26,7 +25,7 @@ class Resize(object):
         image = F.resize(image, (self.h, self.w))
         # If size is a sequence like (h, w), the output size will be matched to this.
         # If size is an int, the smaller edge of the image will be matched to this number maintaining the aspect ratio
-        target = F.resize(target, (self.h, self.w), interpolation=Image.NEAREST)
+        target = F.resize(target, (self.h, self.w), interpolation=T.InterpolationMode.NEAREST)
         return image, target
 
 
@@ -42,7 +41,7 @@ class RandomResize(object):
         image = F.resize(image, size)
         # If size is a sequence like (h, w), the output size will be matched to this.
         # If size is an int, the smaller edge of the image will be matched to this number maintaining the aspect ratio
-        target = F.resize(target, size, interpolation=Image.NEAREST)
+        target = F.resize(target, size, interpolation=T.InterpolationMode.NEAREST)
         return image, target
 
 

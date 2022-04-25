@@ -71,10 +71,6 @@ class LAVT(pl.LightningModule):
 
     def forward(self, batch, batch_idx):
         image, target, sentences, attentions = items_from_batch(batch)
-        print(image.dtype, image.shape)
-        print(target.dtype, target.shape)
-        print(sentences.dtype, sentences.shape)
-        print(attentions.dtype, attentions.shape)
 
         last_hidden_states = self.bert_model(sentences, attention_mask=attentions)[0]  # (6, 10, 768)
         embedding = last_hidden_states.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
