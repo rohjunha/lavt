@@ -123,9 +123,6 @@ class LAVT(pl.LightningModule):
             res.append({'i': i, 'u': u, 'iou': iou})
         return res
 
-    def test_epoch_end(self, test_step_outputs) -> None:
-        self.accumulate_outputs(test_step_outputs)
-
     def validation_epoch_end(self, validation_step_outputs):
         self.accumulate_outputs(validation_step_outputs)
 

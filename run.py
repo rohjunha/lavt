@@ -1,5 +1,5 @@
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 
 from args import get_parser
@@ -24,6 +24,7 @@ def train(args):
         filename=filename_fmt,
         save_top_k=3,
         mode='max')
+    lr_monitor_callback = LearningRateMonitor(logging_interval='step')
 
     trainer = pl.Trainer(
         logger=wandb_logger,
@@ -32,7 +33,7 @@ def train(args):
         strategy='ddp',
         sync_batchnorm=True,
         num_sanity_val_steps=0,
-        callbacks=[checkpoint_callback, ])
+        callbacks=[checkpoint_callback, lr_monitor_callback, ])
     trainer.fit(model=model, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
 
