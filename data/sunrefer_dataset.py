@@ -45,14 +45,14 @@ class SUNREFERDataset(Dataset):
     def __init__(self, split: str, eval_mode: bool, image_size: int = 480, max_len: int = 50):
         Dataset.__init__(self)
 
-        rgbd_refer_dir = Path.home() / 'projects/Refer-it-in-RGBD'
-        self.root_dir = rgbd_refer_dir / 'sunrgbd/tmp_seg'
+        self.root_dir = Path.home() / 'data/sunrefer'
         self.db_path = self.root_dir / 'database'
-        self.refer_path = rgbd_refer_dir / 'data/sunrefer_singleRGBD/SUNREFER_v2.json'
-        self.eval_mode = eval_mode
-
-        self.db = InstanceStorage(read_only=True, db_path=self.db_path)
+        self.refer_path = self.root_dir / 'SUNREFER_v2_revised.json'
         self.data_idx_path = self.root_dir / '{}_data_idx.txt'.format(split)
+
+        self.eval_mode = eval_mode
+        self.db = InstanceStorage(read_only=True, db_path=self.db_path)
+
         with open(str(self.data_idx_path), 'r') as file:
             self.data_idx_list = file.read().split()
         self.image_size = image_size
@@ -61,11 +61,8 @@ class SUNREFERDataset(Dataset):
 
         with open(str(self.refer_path), 'r') as file:
             refer_data = json.load(file)
-        sentence_by_image_id = defaultdict(list)
-        for refer_item in refer_data:
-            image_id = refer_item['image_id']
-            sentence = refer_item['sentence']
-            sentence_by_image_id[image_id].append(sentence)
+        sentence_by_image_id = {image_object_id.split('_')[0]: refer_item['sentences']
+                                for image_object_id, refer_item in refer_data.items()}
 
         self.refer_data = dict()
         for image_id, sentences in sentence_by_image_id.items():
